@@ -1,0 +1,21 @@
+{
+  "slug": "SoxsaMinilab",
+  "version": "1.0",
+  "license": "GPL-3.0-only",
+  "name": "Soxsa",
+  "brand": "Soxsa",
+  "author": "Soxsa",
+  "authorEmail": "",
+  "pluginUrl": "",
+  "authorUrl": "",
+  "manualUrl": "h",
+  "sourceUrl": "",
+  "changelogUrl": "https://github.com/soxsa/soxsa",
+  "modules": [
+	{
+      "slug": "SoxsaMinilabIndicator",
+      "name": "SoxsaMinilabIndicator",
+      "tags": ["CONTROLLER"]
+    }
+  ]
+}
