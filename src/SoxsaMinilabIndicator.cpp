@@ -2,6 +2,82 @@
 #include <string.hpp>
 #include <patch.hpp>
 
+struct VoltageDisplayWidget : Widget {
+	
+	float voltage;
+	LightWidget *lights[11], *light;
+	NVGcolor lightColors[11];
+	
+	VoltageDisplayWidget() {
+		
+	    // Init the colors
+		NVGcolor color[3];
+		color[0] = nvgRGB(0x00, 0xff, 0x00); //Green
+		color[1] = nvgRGB(0xff, 0xff, 0x00); //Amber
+		color[2] = nvgRGB(0xff, 0x00, 0x00); //Red
+		
+		// Create a vertical column of lights.
+		for (int i=0;i<11;i++) {
+			light = createWidget<LightWidget>(Vec(3,50-i*5));
+			light->setSize(Vec(3,3));
+			lights[i] = light;	
+			addChild(light);
+			
+			//Set the color
+			if (i<4) {
+				lightColors[i] = color[0];
+			} else if (i<7) {
+				lightColors[i] = color[1];
+			} else {
+				lightColors[i] = color[2];
+			}
+		}
+	}
+	
+    void draw(const DrawArgs &args) override {	
+		char display_string[50];
+			
+		NVGcolor textColor;
+		if (voltage <=3) {
+			textColor = nvgRGB(0x00, 0xff, 0x00);  // Lo
+		}
+		else if (voltage <=6) {
+			textColor = nvgRGB(0x00, 0xff, 0xff);  // Med
+		}
+		else {
+			textColor = nvgRGB(0xff, 0xff, 0xff);  // High
+		}
+		
+		//Lights
+		//NVGcolor lightOn  = nvgRGB(0xff,0xff,0xff);
+		NVGcolor lightOff = nvgRGB(0x00,0x00,0x00);
+		for (int i=0;i<11;i++) {
+			if (voltage <= 0.0f) {
+			    lights[i]->color = lightOff;
+			} else if (voltage >= i) {
+				lights[i]->color = lightColors[i];
+			} else {
+				lights[i]->color = lightOff;
+			}
+		}
+		
+		//Integer volts
+		/*
+		sprintf(display_string,"%2.0f",voltage);
+		nvgFontSize(args.vg, 24);
+		nvgFillColor(args.vg, textColor);	
+		nvgText(args.vg,0,18, display_string, NULL);
+		*/
+		
+		//0.1 volts.
+		sprintf(display_string,"%2.1f",voltage);
+		nvgFontSize(args.vg, 8);
+		nvgText(args.vg,10,50, display_string, NULL);
+		
+		Widget::draw(args);
+	}
+};
+
 struct SoxsaMinilabIndicator : Module {
 	
     //ClockDivider to process only every N samples for optimisation.
@@ -10,12 +86,13 @@ struct SoxsaMinilabIndicator : Module {
 	// The textField[] array holds pointers to the TextField widgets
 	// created in the widget constructor.
 	static const int NUM_TEXTFIELDS=13;        // 4 for each bank of 4 knobs, + 8 for each pad, + 1 for notes
-	TextField *textField[NUM_TEXTFIELDS];
-
     static const int NUM_PARAMS  = 16;
 	static const int NUM_INPUTS  =  1;
 	static const int NUM_OUTPUTS = 16;
 	static const int NUM_LIGHTS  =  0;
+	
+	TextField *textField[NUM_TEXTFIELDS];
+	VoltageDisplayWidget *voltageDisplay[NUM_OUTPUTS];
     
     void process(const ProcessArgs &args)override;
 	
@@ -68,6 +145,7 @@ struct SoxsaMinilabIndicator : Module {
 		}
 	}
 
+
 };
 
 
@@ -79,18 +157,24 @@ void SoxsaMinilabIndicator::process(const ProcessArgs &args) {
 		//Send each CV to the 16 outputs
 		//
 		//If the input is not connected, just use
-		//as a normal controller.
-		float v;
+		//as a normal controller and get the voltages 
+		//from the knobs.
+		float v = 0.0f;
 		if (inputs[0].isConnected()) {
 			for (int i=0;i<NUM_OUTPUTS;i++) {
 				v = inputs[0].getVoltage(i);
-				paramQuantities[i]->setValue(v);
+				if (voltageDisplay[i]) {
+					voltageDisplay[i]->voltage = v;
+				}
 				outputs[i].setVoltage(v);
 			}
 		} else {
 			for (int i=0;i<NUM_OUTPUTS;i++) {
-				v = paramQuantities[i]->getValue();
+				v = params[i].getValue();
 				outputs[i].setVoltage(v);
+				if (voltageDisplay[i]) {
+					voltageDisplay[i]->voltage = v;
+				}
 			}
 		}
 	}
@@ -100,7 +184,10 @@ void SoxsaMinilabIndicator::process(const ProcessArgs &args) {
 
 struct SoxsaMinilabIndicatorWidget : ModuleWidget { 
    SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *module);
+
 };
+
+
 
 
 SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *module) {
@@ -113,15 +200,33 @@ SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *
 	panel->box.size = box.size;
 	panel->setBackground(APP->window->loadSvg(asset::plugin(pluginInstance, "res/SoxsaMinilabBackground.svg")));
 	addChild(panel);
+	
+	//Voltage Display
+	VoltageDisplayWidget* vdw;
+	int x,y;
+    int dx = 62;  // spacing between elements	
+    int offsetX = -15;  
+	int offsetY = 0;
+	int knobSetLeft[4] = {60, 350, 60,350};  
+	int knobSetTop[4]  = {130,130,230,230};	
+	int id=0;
+	for (int i=0;i<4;i++) {
+		x = knobSetLeft[i]+offsetX;
+		y = knobSetTop[i]+offsetY;
+		for (int j=0;j<4;j++) {
+			vdw = createWidget<VoltageDisplayWidget>(Vec(x+dx*j,y));
+			if (module) module->voltageDisplay[id] = vdw;
+			addChild(vdw);
+			id++;
+		}
+	}
+	
 
     //Knobs
 	//Arranged in 4 banks of 4
-    int x,y;
-    int dx = 62;  // spacing between elements	
-	int knobSetLeft[4] = {60, 350, 60,350};  
-	int knobSetTop[4]  = {130,130,230,230};
-	
-	int id=0;
+	id=0;
+	offsetX = 8;  //Offset each jack diagonally down and right from its knob.
+	offsetY = 50;
 	for (int i=0;i<4;i++) {
 		x = knobSetLeft[i];
 		y = knobSetTop[i];
@@ -133,14 +238,15 @@ SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *
 	
 	//Poly input jack.
 	id = 0;
-    addInput(createInput<jack>(Vec(50,47), module, id));
+    addInput(createInput<jack>(Vec(10,316), module, id));
     
     //Output Jacks
-	int offset = 30;  //Offset each jack diagonally down and right from its knob.
+	offsetX = 12;  //Offset each jack diagonally down and right from its knob.
+	offsetY = 38;
 	id = 0;
 	for (int i=0;i<4;i++) {
-		x = knobSetLeft[i] + offset;
-		y = knobSetTop[i]  + offset;
+		x = knobSetLeft[i] + offsetX;
+		y = knobSetTop[i]  + offsetY;
 		for (int j=0;j<4;j++) {
 			addOutput(createOutput<jackOutput>(Vec(x+dx*j,y), module, id));
 			id++;
@@ -171,7 +277,7 @@ SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *
 	
 	//Bank of eight text fields to show what the Minilab pads
 	//are setup to do.
-	x = 22;
+	x = 38;
 	y = 300;
 	for (int i=0;i<8;i++) {
 		tf = createWidget<LedDisplayTextField>(Vec(x,y));
@@ -192,7 +298,6 @@ SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *
 	if (module) {
 		module->textField[12] = tf;
 	}
-	
 
 }
 Model *modelSoxsaMinilabIndicator = createModel<SoxsaMinilabIndicator,SoxsaMinilabIndicatorWidget>("SoxsaMinilabIndicator");
