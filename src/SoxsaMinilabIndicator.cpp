@@ -2,6 +2,11 @@
 #include <string.hpp>
 #include <patch.hpp>
 
+// VoltageDisplayWidget
+// Graphic display of each voltage:
+// 1. A column of lights with a range of colors
+// 2. A small text display of the exact voltage
+// 3. A large number showing the integer voltage (disabled)
 struct VoltageDisplayWidget : Widget {
 	
 	float voltage;
@@ -10,7 +15,7 @@ struct VoltageDisplayWidget : Widget {
 	
 	VoltageDisplayWidget() {
 		
-	    // Init the colors
+	    // Init the colors for the lights
 		NVGcolor color[3];
 		color[0] = nvgRGB(0x00, 0xff, 0x00); //Green
 		color[1] = nvgRGB(0xff, 0xff, 0x00); //Amber
@@ -23,7 +28,7 @@ struct VoltageDisplayWidget : Widget {
 			lights[i] = light;	
 			addChild(light);
 			
-			//Set the color
+			//Set the color for each light.
 			if (i<4) {
 				lightColors[i] = color[0];
 			} else if (i<7) {
@@ -36,7 +41,9 @@ struct VoltageDisplayWidget : Widget {
 	
     void draw(const DrawArgs &args) override {	
 		char display_string[50];
-			
+	
+	    /*
+        //Set the color for the large text, depending on voltage.		
 		NVGcolor textColor;
 		if (voltage <=3) {
 			textColor = nvgRGB(0x00, 0xff, 0x00);  // Lo
@@ -47,6 +54,7 @@ struct VoltageDisplayWidget : Widget {
 		else {
 			textColor = nvgRGB(0xff, 0xff, 0xff);  // High
 		}
+		*/
 		
 		//Lights
 		//NVGcolor lightOn  = nvgRGB(0xff,0xff,0xff);
@@ -69,7 +77,7 @@ struct VoltageDisplayWidget : Widget {
 		nvgText(args.vg,0,18, display_string, NULL);
 		*/
 		
-		//0.1 volts.
+		//Small voltage display e.g. 5.3
 		sprintf(display_string,"%2.1f",voltage);
 		nvgFontSize(args.vg, 8);
 		nvgText(args.vg,10,50, display_string, NULL);
@@ -78,7 +86,13 @@ struct VoltageDisplayWidget : Widget {
 	}
 };
 
+//A visual analogue of the Minilab midi controller
+//with 16 knobs and 8 pads
 struct SoxsaMinilabIndicator : Module {
+	
+	//When the input is connected, either move the knobs to 
+	//reflect the voltage or not.
+	bool moveKnobs;
 	
     //ClockDivider to process only every N samples for optimisation.
     dsp::ClockDivider knobUpdateDivider;
@@ -102,6 +116,7 @@ struct SoxsaMinilabIndicator : Module {
 			configParam(i, 0, 10, 0);
 		}
 		knobUpdateDivider.setDivision(512);
+		moveKnobs = true;
 	}
 	
 	//Make the name of the text field to be stored in json.
@@ -133,6 +148,10 @@ struct SoxsaMinilabIndicator : Module {
 		for (int i=0;i<NUM_TEXTFIELDS;i++) {
 			json_object_set_new(rootJ, getJsonTextFieldName(name,i), json_string(textField[i]->text.c_str()));
 		}
+		
+		//Move knobs to show voltage.
+		json_object_set_new(rootJ,  "moveKnobs", json_boolean(moveKnobs));  
+		
 		return rootJ;
 	}
 
@@ -143,6 +162,9 @@ struct SoxsaMinilabIndicator : Module {
 			textJ = json_object_get(rootJ, getJsonTextFieldName(name,i));
 			if (textJ) textField[i]->text = json_string_value(textJ);
 		}
+		
+		//Move knobs to show voltage.
+		moveKnobs = json_boolean_value(json_object_get(rootJ, "moveKnobs")); 
 	}
 
 
@@ -153,22 +175,30 @@ void SoxsaMinilabIndicator::process(const ProcessArgs &args) {
 	if (knobUpdateDivider.process()) {
 		//If the input is connected then...
 		//Get the CV of each channel of the one polyphonic input
-		//Set all 16 knobs to reflect the voltages of each channel
+		//Optionally set all 16 knobs to reflect the voltages of each channel
 		//Send each CV to the 16 outputs
 		//
 		//If the input is not connected, just use
 		//as a normal controller and get the voltages 
 		//from the knobs.
+		//
 		float v = 0.0f;
 		if (inputs[0].isConnected()) {
+			//Polyphonic input is connected. Take the voltage from that.
 			for (int i=0;i<NUM_OUTPUTS;i++) {
 				v = inputs[0].getVoltage(i);
 				if (voltageDisplay[i]) {
 					voltageDisplay[i]->voltage = v;
+					
+					//Optionally rotate the knobs to reflect the volume.
+					if (moveKnobs) {
+						paramQuantities[i]->setValue(v);
+					}
 				}
 				outputs[i].setVoltage(v);
 			}
 		} else {
+			//Input is not connected, take the voltage from the knobs.
 			for (int i=0;i<NUM_OUTPUTS;i++) {
 				v = params[i].getValue();
 				outputs[i].setVoltage(v);
@@ -183,7 +213,35 @@ void SoxsaMinilabIndicator::process(const ProcessArgs &args) {
 
 
 struct SoxsaMinilabIndicatorWidget : ModuleWidget { 
+
    SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *module);
+  
+	void appendContextMenu(Menu* menu) override {
+		SoxsaMinilabIndicator* module = dynamic_cast<SoxsaMinilabIndicator*>(this->module);
+
+		//Menu item to toggle between moving/not moving the knobs based on input voltage
+		struct MoveKnobs : MenuItem {
+			
+			SoxsaMinilabIndicator* module;
+			
+			void onAction(const event::Action& e) override {
+				module->moveKnobs = !module->moveKnobs;
+			}
+			void step() override {
+				rightText = (module->moveKnobs) ? "✔" : "";
+				MenuItem::step();
+			}
+		};
+
+		//Add the menu items.
+		menu->addChild(new MenuSeparator());
+     
+		//moveKnobs menu item.
+		MoveKnobs* moveKnobsMenuItem = createMenuItem<MoveKnobs>("Move Knobs to Show Voltage");
+		moveKnobsMenuItem->module = module;
+		menu->addChild(moveKnobsMenuItem);
+
+	}
 
 };
 
@@ -298,6 +356,7 @@ SoxsaMinilabIndicatorWidget::SoxsaMinilabIndicatorWidget(SoxsaMinilabIndicator *
 	if (module) {
 		module->textField[12] = tf;
 	}
+	
 
 }
 Model *modelSoxsaMinilabIndicator = createModel<SoxsaMinilabIndicator,SoxsaMinilabIndicatorWidget>("SoxsaMinilabIndicator");
